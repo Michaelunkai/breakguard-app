@@ -1,0 +1,187 @@
+use std::collections::BTreeMap;
+use std::io::Write;
+use std::process::Command;
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
+#[cfg(windows)]
+mod win {
+    use std::os::raw::{c_int, c_uint, c_void};
+    #[link(name = "user32")]
+    extern "system" {
+        fn MessageBoxW(h: *mut c_void, text: *const u16, caption: *const u16, kind: c_uint) -> c_int;
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetThreadExecutionState(flags: u32) -> u32;
+    }
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+    pub fn popup(title: &str, text: &str) {
+        let t = wide(text);
+        let c = wide(title);
+        unsafe {
+            MessageBoxW(std::ptr::null_mut(), t.as_ptr(), c.as_ptr(), 0x40 | 0x40000);
+        }
+    }
+    pub fn keep_awake(on: bool) {
+        unsafe {
+            SetThreadExecutionState(if on { 0x8000_0001 } else { 0x8000_0000 });
+        }
+    }
+}
+#[cfg(not(windows))]
+mod win {
+    pub fn popup(_t: &str, _x: &str) {}
+    pub fn keep_awake(_on: bool) {}
+}
+
+type Snap = BTreeMap<String, usize>;
+
+const DEFAULT_WATCH: &str = "claude.exe,codex.exe,node.exe,cursor.exe,code.exe,docker desktop.exe,ollama.exe,python.exe";
+
+fn snapshot(watch: &[String]) -> Snap {
+    let mut out = Command::new("tasklist");
+    out.args(["/fo", "csv", "/nh"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        out.creation_flags(0x0800_0000);
+    }
+    let mut snap: Snap = watch.iter().map(|w| (w.clone(), 0)).collect();
+    if let Ok(o) = out.output() {
+        let text = String::from_utf8_lossy(&o.stdout).to_lowercase();
+        for line in text.lines() {
+            let name = line.trim_start_matches('"').split('"').next().unwrap_or("");
+            if let Some(c) = snap.get_mut(name) {
+                *c += 1;
+            }
+        }
+    }
+    snap
+}
+
+fn fmt_snap(s: &Snap) -> String {
+    let parts: Vec<String> = s.iter().filter(|(_, c)| **c > 0).map(|(n, c)| format!("{}x{}", n.trim_end_matches(".exe"), c)).collect();
+    if parts.is_empty() { "none of the watched apps".to_string() } else { parts.join(" ") }
+}
+
+fn compare(before: &Snap, after: &Snap) -> String {
+    let mut gone = Vec::new();
+    for (n, b) in before {
+        if *b > 0 && after.get(n).copied().unwrap_or(0) == 0 {
+            gone.push(n.clone());
+        }
+    }
+    let total: usize = after.values().sum();
+    if gone.is_empty() {
+        format!("OK: every watched app that was running before the break is still running ({} processes). This checks that processes exist, not that they are doing useful work.", total)
+    } else {
+        format!("WARNING: no longer running after the break: {}. Check those programs.", gone.join(", "))
+    }
+}
+
+fn mmss(secs: u64) -> String {
+    format!("{:02}:{:02}", secs / 60, secs % 60)
+}
+
+fn countdown(label: &str, secs: u64, watch: &[String]) -> Snap {
+    let end = Instant::now() + Duration::from_secs(secs);
+    let mut snap = snapshot(watch);
+    let mut last = Instant::now();
+    loop {
+        let now = Instant::now();
+        if now >= end {
+            break;
+        }
+        if now.duration_since(last) >= Duration::from_secs(15) {
+            snap = snapshot(watch);
+            last = now;
+        }
+        let left = (end - now).as_secs() + 1;
+        print!("\r[{}] {} left | running: {}                    ", label, mmss(left), fmt_snap(&snap));
+        let _ = std::io::stdout().flush();
+        sleep(Duration::from_millis(500));
+    }
+    println!();
+    snapshot(watch)
+}
+
+fn log(msg: &str) {
+    let path = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("breakguard.log")));
+    if let Some(p) = path {
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "{}", msg);
+        }
+    }
+}
+
+fn popup_async(title: &'static str, text: String) {
+    std::thread::spawn(move || win::popup(title, &text));
+}
+
+fn usage() {
+    println!("breakguard - break reminder that never touches your running apps");
+    println!("  breakguard status                 show watched apps right now");
+    println!("  breakguard run [options]          start the work/break loop");
+    println!("options: --work-min N (50)  --break-min N (10)  --cycles N (0=forever)");
+    println!("         --watch a.exe,b.exe  --no-popup  --keep-awake (opt-in, off by default)");
+    println!("It only shows reminders. It never closes, suspends, locks or sleeps anything.");
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cmd = args.first().cloned().unwrap_or_default();
+    let mut work = 50.0f64;
+    let mut brk = 10.0f64;
+    let mut cycles = 0u32;
+    let mut watch_s = DEFAULT_WATCH.to_string();
+    let mut popup = true;
+    let mut awake = false;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--work-min" => { i += 1; work = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(work); }
+            "--break-min" => { i += 1; brk = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(brk); }
+            "--cycles" => { i += 1; cycles = args.get(i).and_then(|v| v.parse().ok()).unwrap_or(0); }
+            "--watch" => { i += 1; if let Some(v) = args.get(i) { watch_s = v.clone(); } }
+            "--no-popup" => popup = false,
+            "--keep-awake" => awake = true,
+            _ => {}
+        }
+        i += 1;
+    }
+    let watch: Vec<String> = watch_s.split(',').map(|s| s.trim().to_lowercase()).filter(|s| !s.is_empty()).collect();
+
+    match cmd.as_str() {
+        "status" => {
+            let s = snapshot(&watch);
+            println!("watched apps running now: {}", fmt_snap(&s));
+        }
+        "run" => {
+            if awake { win::keep_awake(true); }
+            println!("breakguard started: {} min work, {} min break. Ctrl+C stops it.", work, brk);
+            println!("keep-awake while running: {} (released when this program exits)", if awake { "on" } else { "off" });
+            let mut n = 0u32;
+            loop {
+                n += 1;
+                let before = countdown("WORK ", (work * 60.0) as u64, &watch);
+                let msg = format!("Break time: {} minutes. Stand up, drink water, look away from the screen.\n\nThis app does not close or pause your programs. It does not verify session health or prevent Windows sleep unless keep-awake is enabled.", brk);
+                println!("\n*** BREAK TIME ***");
+                log(&format!("cycle {} break start, running: {}", n, fmt_snap(&before)));
+                if popup { popup_async("breakguard - break time", msg); }
+                let after = countdown("BREAK", (brk * 60.0) as u64, &watch);
+                let verdict = compare(&before, &after);
+                println!("{}", verdict);
+                log(&format!("cycle {} break end: {}", n, verdict));
+                if popup { popup_async("breakguard - break over", format!("Break over. Back to work.\n\n{}", verdict)); }
+                if cycles > 0 && n >= cycles { break; }
+            }
+            if awake { win::keep_awake(false); }
+            println!("done after {} cycle(s). Log: breakguard.log next to the exe.", n);
+            if popup { sleep(Duration::from_secs(8)); }
+        }
+        _ => usage(),
+    }
+}

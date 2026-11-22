@@ -1,0 +1,45 @@
+[package]
+name = "breakguard"
+version = "0.4.0"
+edition = "2021"
+description = "Break timer, timed sleep, night mode and screen controls for Windows. Never closes your programs."
+
+[dependencies]
+eframe = { version = "=0.31.1", default-features = false, features = ["glow", "default_fonts"] }
+
+[dependencies.windows-sys]
+version = "0.59"
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_Power",
+  "Win32_Security",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Threading",
+  "Win32_Devices_Display",
+  "Win32_UI_Shell",
+  "Win32_UI_HiDpi",
+  "Win32_System_LibraryLoader",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
+  "Win32_System_Registry",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_SystemInformation",
+  "Win32_System_Time",
+  "Win32_System_Shutdown",
+  "Win32_System_IO",
+  "Win32_System_Memory",
+  "Win32_System_Environment",
+  "Win32_System_ProcessStatus",
+]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true
+
+[patch.crates-io]
+webbrowser = { path = "stub-webbrowser" }

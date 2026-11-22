@@ -1,0 +1,17 @@
+/target/
+/bgbuild*/
+bgbuild*/
+*.exe
+*.log
+keys_run.txt
+/1
+.mcp.json
+.multiagents/
+.claude/
+graphify-out/
+HANDOFF-*.md
+TEAM-CHARTER*.md
+FINAL-VERIFY.md
+REVIEW.md
+*.tmp
+*.bak

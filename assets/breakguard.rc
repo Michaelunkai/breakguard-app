@@ -1,0 +1,26 @@
+#define RT_MANIFEST 24
+1 ICON "breakguard.ico"
+1 RT_MANIFEST "breakguard.manifest"
+1 VERSIONINFO
+FILEVERSION 0,3,0,0
+PRODUCTVERSION 0,3,0,0
+FILEOS 0x4
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "ProductName", "BreakGuard"
+      VALUE "FileDescription", "BreakGuard - break timer, screen off, night mode"
+      VALUE "FileVersion", "0.3.0"
+      VALUE "ProductVersion", "0.3.0"
+      VALUE "InternalName", "breakguard"
+      VALUE "OriginalFilename", "breakguard.exe"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0409, 1200
+  END
+END

@@ -1,0 +1,6 @@
+work_min=60
+break_secs=450
+warn_secs=10
+break_enabled=0
+off_mode=hardware
+night_enabled=0

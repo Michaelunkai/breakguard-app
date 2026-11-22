@@ -1,0 +1,60 @@
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
+night overlay level 0
+ddc set \\.\DISPLAYMOCK1 1 -> ok
+screens_on
+ddc set \\.\DISPLAYMOCK2 1 -> ok
+screens_on
