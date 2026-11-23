@@ -237,6 +237,8 @@ pub struct App {
     pub sessions_rx: Option<Receiver<crate::sessions::Snapshot>>,
     pub sessions_snapshot: Option<crate::sessions::Snapshot>,
     pub sess_query: String,
+    /// Sessions page tab: false = Running (default), true = Finished.
+    pub sess_finished_tab: bool,
     pub sess_chips: std::collections::HashSet<crate::sessions::Status>,
     pub sess_pinned: std::collections::HashSet<String>,
     pub sess_show_archived: bool,
@@ -448,6 +450,7 @@ impl App {
             log_wanted,
             sessions_snapshot: None,
             sess_query: String::new(),
+            sess_finished_tab: false,
             sess_chips: Default::default(),
             sess_pinned: Default::default(),
             sess_show_archived: false,
@@ -1105,8 +1108,8 @@ impl eframe::App for App {
             });
             ui.add_space(theme::SP_M);
             let mut sel_rect: Option<egui::Rect> = None;
-            // Keep ~130 px for the timer and Break now button below; the nav scrolls when the window is short.
-            let nav_h = (ui.available_height() - 130.0).max(80.0);
+            // Keep ~180 px for the timer and Break now button below; the nav scrolls when the window is short.
+            let nav_h = (ui.available_height() - 180.0).max(80.0);
             egui::ScrollArea::vertical().id_salt("nav_scroll").max_height(nav_h).auto_shrink([false, true]).show(ui, |ui| {
                 for (p, label, icon) in NAV {
                     let sel = self.page == p;

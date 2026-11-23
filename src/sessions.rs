@@ -262,6 +262,44 @@ pub struct SessionInfo {
     pub tail: Vec<String>,
 }
 
+/// Lets at most one progress event per `min_ms` through for each session id.
+pub struct ProgressThrottle {
+    min_ms: i64,
+    last: HashMap<String, i64>,
+}
+
+impl ProgressThrottle {
+    pub fn new(min_ms: i64) -> Self {
+        Self { min_ms, last: HashMap::new() }
+    }
+    /// true = deliver this event now; false = drop it (too soon after the last delivered one).
+    pub fn allow(&mut self, id: &str, now_ms: i64) -> bool {
+        match self.last.get(id) {
+            Some(&t) if now_ms - t < self.min_ms => false,
+            _ => {
+                self.last.insert(id.to_string(), now_ms);
+                true
+            }
+        }
+    }
+}
+
+/// Progress view of a session: percent, current step label, started-at, updated-at (unix ms).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProgressInfo {
+    pub percent: Option<u8>,
+    pub step_label: String,
+    pub started_ms: i64,
+    pub updated_ms: i64,
+}
+
+impl SessionInfo {
+    pub fn progress_info(&self) -> ProgressInfo {
+        let percent = self.progress.and_then(|(d, t)| if t == 0 { None } else { Some((d.min(t) as u64 * 100 / t as u64) as u8) });
+        ProgressInfo { percent, step_label: self.activity.clone(), started_ms: self.created_ms, updated_ms: self.last_active_ms }
+    }
+}
+
 /// Why cloud / remote sessions have no live data here.
 pub fn cloud_note(env: Env) -> Option<&'static str> {
     match env {
@@ -835,6 +873,8 @@ pub struct Snapshot {
     pub ok: bool,
     /// Running Claude sessions by the same discovery the Live tab uses (status bar count).
     pub live: usize,
+    /// Throttled progress events since the previous snapshot (same channel, no second pipe).
+    pub progress: Vec<(String, ProgressInfo)>,
 }
 
 /// A snapshot older than this, or a failed refresh, is shown as "Not live".
@@ -867,20 +907,29 @@ pub fn diff(old: &[SessionInfo], new: &[SessionInfo]) -> Vec<Event> {
     ev
 }
 
+/// Snapshot carrying the throttled progress events computed against the previous scan.
+pub fn build_snapshot(prev: &[SessionInfo], sessions: Vec<SessionInfo>, ok: bool, live: usize, th: &mut ProgressThrottle, now_ms: i64) -> Snapshot {
+    let progress = progress_events(prev, &sessions, th, now_ms);
+    Snapshot { sessions, taken: Instant::now(), ok, live, progress }
+}
+
 /// Poll every second on its own thread; the UI only receives finished snapshots.
 pub fn spawn(ctx: eframe::egui::Context) -> Receiver<Snapshot> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         let live_roots = roots();
         let mut sc = Scanner::new(roots());
+        let mut th = ProgressThrottle::new(250);
+        let mut prev: Vec<SessionInfo> = Vec::new();
         loop {
             let t0 = Instant::now();
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sc.scan(now_ms())));
             let live = std::panic::catch_unwind(|| crate::agents::count_live(&live_roots, &crate::agents::process_alive)).unwrap_or(0);
             let snap = match r {
-                Ok((sessions, ok)) => Snapshot { sessions, taken: Instant::now(), ok, live },
-                Err(_) => Snapshot { sessions: Vec::new(), taken: Instant::now(), ok: false, live },
+                Ok((sessions, ok)) => build_snapshot(&prev, sessions, ok, live, &mut th, now_ms()),
+                Err(_) => Snapshot { sessions: Vec::new(), taken: Instant::now(), ok: false, live, progress: Vec::new() },
             };
+            prev = snap.sessions.clone();
             if tx.send(snap).is_err() {
                 return;
             }
@@ -900,6 +949,67 @@ pub fn sort_sessions(v: &mut [SessionInfo], pinned: &HashSet<String>) {
         let kb = (!pinned.contains(&b.id), b.status.rank(), std::cmp::Reverse(b.last_active_ms));
         ka.cmp(&kb)
     });
+}
+
+/// Progress events for every session whose step label or progress changed between two scans,
+/// already throttled (one per `ProgressThrottle` window per session).
+pub fn progress_events(prev: &[SessionInfo], next: &[SessionInfo], th: &mut ProgressThrottle, now_ms: i64) -> Vec<(String, ProgressInfo)> {
+    let old: HashMap<&str, &SessionInfo> = prev.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut out = Vec::new();
+    for s in next {
+        let changed = old.get(s.id.as_str()).map_or(true, |o| o.activity != s.activity || o.progress != s.progress);
+        if changed && th.allow(&s.id, now_ms) {
+            out.push((s.id.clone(), s.progress_info()));
+        }
+    }
+    out
+}
+
+/// Reactive-style store of the latest progress per session id; `apply` reports which ids changed.
+#[derive(Default)]
+pub struct ProgressStore {
+    pub by_id: HashMap<String, ProgressInfo>,
+}
+
+impl ProgressStore {
+    pub fn apply(&mut self, ev: &[(String, ProgressInfo)]) -> Vec<String> {
+        let mut changed = Vec::new();
+        for (id, p) in ev {
+            if self.by_id.get(id) != Some(p) {
+                self.by_id.insert(id.clone(), p.clone());
+                changed.push(id.clone());
+            }
+        }
+        changed
+    }
+}
+
+/// Finished-tab card line: outcome, total duration, finished-at (relative) and, for a failure, the error summary.
+pub fn finished_summary(s: &SessionInfo, now_ms: i64) -> String {
+    let outcome = match s.status.phase() {
+        Phase::Finished => "Finished",
+        Phase::Failed => "Failed",
+        Phase::Cancelled => "Cancelled",
+        Phase::Paused => "Stopped (idle)",
+        Phase::Running => "Running",
+    };
+    let dur = elapsed_text((s.last_active_ms - s.created_ms) / 1000);
+    let at = age_text((now_ms - s.last_active_ms) / 1000);
+    let mut out = format!("{outcome}  |  took {dur}  |  finished {at}");
+    if s.status == Status::Error {
+        let why = s.note.as_deref().filter(|n| !n.is_empty()).unwrap_or(s.activity.as_str());
+        if !why.is_empty() {
+            out.push_str("  |  ");
+            out.push_str(why);
+        }
+    }
+    out
+}
+
+/// Tab order: pinned first, then newest activity first (Running = most recent activity, Finished = finished-at,
+/// which is the last activity of an ended session); ties by id so the order is stable.
+pub fn sort_for_tab(v: &mut [SessionInfo], pinned: &HashSet<String>) {
+    v.sort_by(|a, b| (!pinned.contains(&a.id), std::cmp::Reverse(a.last_active_ms), &a.id).cmp(&(!pinned.contains(&b.id), std::cmp::Reverse(b.last_active_ms), &b.id)));
 }
 
 /// Search text (name, cwd, activity; case-insensitive) and status chips (empty set = all).
@@ -942,10 +1052,171 @@ pub fn summarize(v: &[SessionInfo]) -> Summary {
     s
 }
 
+/// Header tile counts that agree with the tabs: (running = Running + needs input, finished = every other session).
+pub fn tile_counts(s: &Summary) -> (u32, u32) {
+    let running = s.running + s.waiting;
+    (running, s.total - running)
+}
+
+/// Canonical lifecycle phase every view uses (one source of truth for Running vs not).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Phase {
+    Running,
+    Paused,
+    Finished,
+    Failed,
+    Cancelled,
+}
+
+impl Phase {
+    pub fn is_running(self) -> bool {
+        self == Phase::Running
+    }
+}
+
+impl Status {
+    /// Needs-input still counts as running (the session is alive and working toward an answer); Idle = Paused.
+    pub fn phase(self) -> Phase {
+        match self {
+            Status::Running | Status::WaitingInput => Phase::Running,
+            Status::Idle => Phase::Paused,
+            Status::Finished => Phase::Finished,
+            Status::Error => Phase::Failed,
+        }
+    }
+}
+
+pub fn is_running(s: &SessionInfo) -> bool {
+    s.status.phase().is_running()
+}
+
+pub fn running_sessions(v: &[SessionInfo]) -> Vec<&SessionInfo> {
+    v.iter().filter(|s| is_running(s)).collect()
+}
+
+pub fn finished_sessions(v: &[SessionInfo]) -> Vec<&SessionInfo> {
+    v.iter().filter(|s| !is_running(s)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    fn mk(id: &str, st: Status) -> SessionInfo {
+        SessionInfo { id: id.into(), name: id.into(), cwd: String::new(), env: Env::Unknown, status: st, archived: false, created_ms: 0, last_active_ms: 0, activity: String::new(), progress: None, note: None, tail: vec![] }
+    }
+    const ALL_ST: [Status; 5] = [Status::Running, Status::WaitingInput, Status::Error, Status::Idle, Status::Finished];
+
+    #[test]
+    fn progress_info_exposes_all_four_fields() {
+        let mut s = mk("p", Status::Running);
+        s.progress = Some((3, 4));
+        s.activity = "Bash: build".into();
+        s.created_ms = 10;
+        s.last_active_ms = 20;
+        assert_eq!(s.progress_info(), ProgressInfo { percent: Some(75), step_label: "Bash: build".into(), started_ms: 10, updated_ms: 20 });
+        s.progress = Some((0, 0));
+        assert_eq!(s.progress_info().percent, None);
+    }
+
+    #[test]
+    fn throttle_100_events_in_1s_delivers_under_5() {
+        let mut th = ProgressThrottle::new(250);
+        let delivered = (0..100).filter(|i| th.allow("a", i * 10)).count();
+        assert!(delivered < 5 && delivered >= 3, "{delivered}");
+        assert!(th.allow("b", 5), "other id has its own budget");
+    }
+
+    #[test]
+    fn tab_sort_newest_first_pinned_on_top() {
+        let mut v: Vec<SessionInfo> = [("a", 10), ("b", 50), ("c", 30), ("d", 50), ("e", 5)].iter().map(|(i, t)| { let mut s = mk(i, Status::Finished); s.last_active_ms = *t; s }).collect();
+        let pin: HashSet<String> = ["e".to_string()].into();
+        sort_for_tab(&mut v, &pin);
+        assert_eq!(v.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(), ["e", "b", "d", "c", "a"]);
+    }
+
+    #[test]
+    fn finished_summary_has_outcome_duration_time_and_error() {
+        let mut s = mk("f", Status::Error);
+        s.created_ms = 0;
+        s.last_active_ms = 125_000;
+        s.activity = "cargo build failed".into();
+        let t = finished_summary(&s, 185_000);
+        assert_eq!(t, "Failed  |  took 2m 05s  |  finished 1m ago  |  cargo build failed");
+        s.status = Status::Finished;
+        assert_eq!(finished_summary(&s, 185_000), "Finished  |  took 2m 05s  |  finished 1m ago");
+    }
+
+    #[test]
+    fn runner_emits_event_per_step_change_and_store_updates_only_that_id() {
+        let mut th = ProgressThrottle::new(250);
+        let mut store = ProgressStore::default();
+        let mut prev = vec![mk("a", Status::Running), mk("b", Status::Running)];
+        let mut events = Vec::new();
+        for (i, step) in ["one", "two", "three"].iter().enumerate() {
+            let mut next = prev.clone();
+            next[0].activity = step.to_string();
+            let ev = progress_events(&prev, &next, &mut th, 1000 * (i as i64 + 1));
+            events.extend(ev.clone());
+            let changed = store.apply(&ev);
+            assert_eq!(changed, ["a"], "only a re-renders (b untouched)");
+            prev = next;
+        }
+        assert!(events.len() >= 3, "{}", events.len());
+        assert!(events.iter().all(|(id, _)| id == "a"));
+        // unchanged scan emits nothing
+        assert!(progress_events(&prev, &prev.clone(), &mut th, 9000).is_empty());
+    }
+
+    #[test]
+    fn progress_events_arrive_over_the_single_channel() {
+        let (tx, rx) = channel::<Snapshot>();
+        let mut th = ProgressThrottle::new(250);
+        let a0 = mk("a", Status::Running);
+        let mut a1 = a0.clone();
+        a1.activity = "step two".into();
+        a1.progress = Some((2, 4));
+        let first = build_snapshot(&[], vec![a0.clone()], true, 1, &mut th, 0);
+        tx.send(first).unwrap();
+        let second = build_snapshot(&[a0], vec![a1], true, 1, &mut th, 1000);
+        tx.send(second).unwrap();
+        let got: Vec<Snapshot> = rx.try_iter().collect();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[1].progress.len(), 1);
+        assert_eq!(got[1].progress[0].0, "a");
+        assert_eq!(got[1].progress[0].1.step_label, "step two");
+        assert_eq!(got[1].progress[0].1.percent, Some(50));
+    }
+
+    #[test]
+    fn phase_maps_every_status_to_running_or_not() {
+        let want = [(Status::Running, Phase::Running), (Status::WaitingInput, Phase::Running), (Status::Error, Phase::Failed), (Status::Idle, Phase::Paused), (Status::Finished, Phase::Finished)];
+        for (st, ph) in want {
+            assert_eq!(st.phase(), ph);
+            assert_eq!(is_running(&mk("x", st)), ph == Phase::Running, "{st:?}");
+        }
+        assert!(!Phase::Cancelled.is_running());
+    }
+
+    #[test]
+    fn running_and_finished_selectors_split_and_cover() {
+        let mut seed = 12345u64;
+        for _ in 0..100 {
+            let v: Vec<SessionInfo> = (0..20)
+                .map(|i| {
+                    seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    mk(&i.to_string(), ALL_ST[(seed >> 33) as usize % 5])
+                })
+                .collect();
+            let r = running_sessions(&v);
+            let f = finished_sessions(&v);
+            assert!(r.iter().all(|s| s.status.phase().is_running()));
+            assert!(f.iter().all(|s| !s.status.phase().is_running()));
+            assert_eq!(r.len() + f.len(), v.len());
+            assert!(r.iter().all(|a| !f.iter().any(|b| a.id == b.id)));
+        }
+    }
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("bg-sess-{name}-{}", std::process::id()));
@@ -1121,6 +1392,94 @@ mod tests {
     }
 
     #[test]
+    fn app_restart_restores_live_sessions_and_moves_orphans_to_finished() {
+        let d = tmp("restart");
+        let sub = d.join("claude-code-sessions").join("a").join("o");
+        let proj = d.join("projects").join("C--x");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(sub.join("local_1.json"), r#"{"sessionId":"local_1","cliSessionId":"cli-1","title":"Alpha","cwd":"C:\\x","lastActivityAt":1}"#).unwrap();
+        let t = assistant(r#"{"type":"tool_use","name":"Bash","input":{"command":"cargo test"}}"#, "\"tool_use\"");
+        std::fs::write(proj.join("cli-1.jsonl"), format!("{t}\n")).unwrap();
+        let now = now_ms();
+        let (before, _) = Scanner::new(roots_with(Some(&d))).scan(now);
+        assert!(is_running(&before[0]), "running before the app is killed");
+        // App killed mid-session, relaunched at once: a brand new Scanner (no memory) sees it still running.
+        let (soon, _) = Scanner::new(roots_with(Some(&d))).scan(now + 5_000);
+        assert!(is_running(&soon[0]), "restored as running");
+        // Relaunched long after the session died: orphan lands in Finished, never shown as running.
+        let (late, _) = Scanner::new(roots_with(Some(&d))).scan(now + 3_600_000);
+        assert!(!is_running(&late[0]), "orphan is in Finished tab");
+        assert_eq!(finished_sessions(&late).len(), 1);
+    }
+
+    #[test]
+    fn e2e_three_sessions_progress_logs_finish_and_tab_placement() {
+        use std::io::Write;
+        let d = tmp("e2e");
+        let sub = d.join("claude-code-sessions").join("a").join("o");
+        let proj = d.join("projects").join("C--x");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        let meta = |i: usize, archived: bool| format!(r#"{{"sessionId":"local_{i}","cliSessionId":"cli-{i}","title":"Job {i}","cwd":"C:/x","isArchived":{archived},"lastActivityAt":1}}"#);
+        let todo = |done: usize, cmd: &str| {
+            let items: Vec<String> = (0..2).map(|k| format!(r#"{{"content":"s{k}","status":"{}"}}"#, if k < done { "completed" } else { "pending" })).collect();
+            assistant(&format!(r#"{{"type":"tool_use","name":"TodoWrite","input":{{"todos":[{}]}}}},{{"type":"tool_use","name":"Bash","input":{{"command":"{cmd}"}}}}"#, items.join(",")), "\"tool_use\"")
+        };
+        for i in 1..=3 {
+            std::fs::write(sub.join(format!("local_{i}.json")), meta(i, false)).unwrap();
+            std::fs::write(proj.join(format!("cli-{i}.jsonl")), format!("{}\n", todo(0, "cargo build"))).unwrap();
+        }
+        let mut sc = Scanner::new(roots_with(Some(&d)));
+        // 1. start: all three in the Running tab with 0/2 progress.
+        let (v, ok) = sc.scan(now_ms());
+        assert!(ok);
+        assert_eq!(running_sessions(&v).len(), 3);
+        assert!(v.iter().all(|s| s.progress == Some((0, 2)) && s.activity == "Bash: cargo build"));
+        // 2. live: new log lines + progress arrive for session 2 only.
+        let mut f = std::fs::OpenOptions::new().append(true).open(proj.join("cli-2.jsonl")).unwrap();
+        writeln!(f, "{}", todo(1, "cargo test")).unwrap();
+        drop(f);
+        let (v, _) = sc.scan(now_ms());
+        let s2 = v.iter().find(|s| s.name == "Job 2").unwrap();
+        assert_eq!((s2.progress, s2.activity.as_str()), (Some((1, 2)), "Bash: cargo test"));
+        assert_eq!(v.iter().find(|s| s.name == "Job 1").unwrap().progress, Some((0, 2)), "others untouched");
+        // 3. finish: sessions 1 and 3 get archived/ended -> Finished tab; 2 keeps running.
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        for i in [1, 3] {
+            std::fs::write(sub.join(format!("local_{i}.json")), meta(i, true)).unwrap();
+        }
+        let (v, _) = sc.scan(now_ms());
+        assert_eq!(running_sessions(&v).iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["Job 2"]);
+        assert_eq!(finished_sessions(&v).len(), 2, "finished ones sit in the Finished tab");
+    }
+
+    #[test]
+    fn corrupt_files_are_skipped_and_good_sessions_survive() {
+        let d = tmp("corrupt");
+        let sub = d.join("claude-code-sessions").join("a").join("o");
+        let proj = d.join("projects").join("C--x");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(sub.join("local_bad.json"), "{ not json ][").unwrap();
+        std::fs::write(sub.join("local_1.json"), r#"{"sessionId":"local_1","cliSessionId":"cli-1","title":"Good","cwd":"C:/x","lastActivityAt":1}"#).unwrap();
+        let t = assistant(r#"{"type":"tool_use","name":"Bash","input":{"command":"ok"}}"#, "\"tool_use\"");
+        std::fs::write(proj.join("cli-1.jsonl"), format!("garbage line\n{{\"type\":\n{t}\n{{\"type\":\"assi")).unwrap();
+        let (v, ok) = Scanner::new(roots_with(Some(&d))).scan(now_ms());
+        assert!(ok);
+        let good: Vec<_> = v.iter().filter(|s| s.name == "Good").collect();
+        assert_eq!(good.len(), 1);
+        assert_eq!(good[0].activity, "Bash: ok");
+    }
+
+    #[test]
+    fn header_tiles_match_tab_counts() {
+        let v: Vec<SessionInfo> = ALL_ST.iter().map(|&st| mk(&format!("{st:?}"), st)).collect();
+        let (r, f) = tile_counts(&summarize(&v));
+        assert_eq!((r as usize, f as usize), (running_sessions(&v).len(), finished_sessions(&v).len()));
+    }
+
+    #[test]
     fn scanner_reads_transcript_status_and_cloud_note() {
         let d = tmp("scan");
         let sub = d.join("claude-code-sessions").join("a").join("o");
@@ -1155,7 +1514,7 @@ mod tests {
     #[test]
     fn staleness_flag() {
         let now = Instant::now();
-        let s = Snapshot { sessions: vec![], taken: now, ok: true, live: 0 };
+        let s = Snapshot { sessions: vec![], taken: now, ok: true, live: 0, progress: vec![] };
         assert!(!is_stale(&s, now + Duration::from_secs(4)));
         assert!(is_stale(&s, now + Duration::from_secs(6)));
         assert!(is_stale(&Snapshot { ok: false, ..s }, now), "failed refresh is always stale");

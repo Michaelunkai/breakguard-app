@@ -1,0 +1,5 @@
+[package]
+name = "webbrowser"
+version = "1.2.7"
+edition = "2021"
+description = "Local no-op stand-in: this app never opens links, and the real crate needs dlltool to build with the GNU toolchain."

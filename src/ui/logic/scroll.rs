@@ -41,6 +41,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn appended_lines_keep_scroll_at_bottom_until_user_scrolls_up() {
+        let mut s = FollowState::default();
+        let mut max = 100.0_f32;
+        for _ in 0..50 {
+            max += 18.0; // a line appended, content grows
+            let off = if s.follow { max } else { 0.0 }; // stick_to_bottom puts the offset at the bottom
+            s.on_scroll(off, max, false);
+            assert!(s.follow && off == max, "scrollTop follows bottom");
+        }
+        s.on_scroll(200.0, max, true); // user scrolls up
+        max += 18.0;
+        s.on_scroll(200.0, max, false);
+        assert!(!s.follow, "new lines do not yank a reader who scrolled up");
+        assert!(s.show_jump_button());
+    }
+
+    #[test]
     fn default_follows() {
         let s = FollowState::default();
         assert!(s.follow);

@@ -904,6 +904,9 @@ mod layout_wiring_tests {
     #[test]
     fn snapshot_roundtrips_collapsed_heights_filter_sort() {
         let mut ui = LaneUi::default();
+        // Default loads the user's real saved layout from disk: start from a clean slate so the test is hermetic.
+        ui.views.clear();
+        ui.layout.collapsed.clear();
         ui.layout.collapsed.insert("b".into());
         ui.layout.collapsed.insert("a".into());
         ui.views.entry("c".into()).or_default().height = 300.0;

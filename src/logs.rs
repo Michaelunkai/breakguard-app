@@ -107,7 +107,14 @@ impl SessionLog {
         }
         self.total_lines += 1;
         self.bytes += l.bytes();
-        self.lines.push_back(l);
+        // Monotonic order by timestamp: a late (out-of-order) line slides back to its place; unknown ts (0) stays in arrival order.
+        let mut at = self.lines.len();
+        if l.ts_ms != 0 {
+            while at > 0 && self.lines[at - 1].ts_ms > l.ts_ms {
+                at -= 1;
+            }
+        }
+        self.lines.insert(at, l);
         while self.lines.len() > self.max_lines || (self.bytes > self.max_bytes && self.lines.len() > 1) {
             self.drop_oldest();
         }
@@ -789,6 +796,29 @@ mod tests {
     }
 
     // ---- box 13: model
+    #[test]
+    fn hundred_thousand_lines_stay_bounded_and_fast() {
+        let mut log = SessionLog::new("big", "big");
+        let t0 = std::time::Instant::now();
+        for i in 0..100_000i64 {
+            log.push(LogLine { ts_ms: i, kind: LineKind::Assistant, tool: String::new(), text: format!("line {i}"), plain: String::new() });
+        }
+        assert!(t0.elapsed() < std::time::Duration::from_secs(2), "{:?}", t0.elapsed());
+        assert_eq!(log.total_lines, 100_000);
+        assert!(log.len() <= SESSION_MAX_LINES, "ring holds {}", log.len());
+    }
+
+    #[test]
+    fn shuffled_timestamps_render_sorted() {
+        let mut log = SessionLog::new("s", "s");
+        let order = [5i64, 1, 4, 2, 3, 9, 7, 8, 6];
+        for t in order {
+            log.push(LogLine { ts_ms: t, kind: LineKind::Assistant, tool: String::new(), text: format!("l{t}"), plain: String::new() });
+        }
+        let got: Vec<i64> = log.iter().map(|l| l.ts_ms).collect();
+        assert_eq!(got, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
     #[test]
     fn model_push_cap_ordering_and_counters() {
         let mut l = SessionLog::with_caps("s", "n", 5, 1 << 20);

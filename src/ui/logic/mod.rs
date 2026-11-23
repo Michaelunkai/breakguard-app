@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod badge;
+pub mod cardview;
 pub mod breakpoint;
 pub mod clear;
 pub mod clock;
