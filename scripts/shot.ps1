@@ -108,7 +108,7 @@ if ($Seed -and -not $Fresh) {
         ('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"cargo test --release --offline --bin breakguard presets","description":"Run the preset tests"}}]},"timestamp":"' + (& $iso 200) + '"}'),
         ('{"type":"user","message":{"content":[{"type":"tool_result","content":"error[E0308]: mismatched types at src/engine.rs:412:9, expected u32 found usize","is_error":true}]},"timestamp":"' + (& $iso 190) + '"}'),
         ('{"type":"assistant","message":{"content":[{"type":"text","text":"The compile failed on line 412 with 3 mismatched types. Fixing the cast and running the tests again. ' + ('This line is deliberately very long so the wrap and truncation rules can be seen. ' * 4) + '"}]},"timestamp":"' + (& $iso 180) + '"}'),
-        ('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"F:/study/projects/breakguard/src/engine.rs"}}]},"timestamp":"' + (& $iso 170) + '"}'),
+        ('{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"F:/study/Windows/Applications/Desktop/Utilities/TimeManager/BreakReminders/breakguard/src/engine.rs"}}]},"timestamp":"' + (& $iso 170) + '"}'),
         ('{"type":"user","message":{"content":[{"type":"tool_result","content":"The file src/engine.rs has been updated successfully.","is_error":false}]},"timestamp":"' + (& $iso 160) + '"}')
       )
       Set-Content "$proj\$($s.cli).jsonl" -Value (@($rich) + @($plan, $last)) -Encoding UTF8
