@@ -1,5 +1,5 @@
 // AdversarialQA scratch attacks on src/ui/logic/grid.rs (read-only include via #[path]).
-#[path = "F:/study/projects/breakguard/src/ui/logic/grid.rs"]
+#[path = "F:/study/Windows/Applications/Desktop/Utilities/TimeManager/BreakReminders/breakguard/src/ui/logic/grid.rs"]
 #[allow(dead_code)]
 mod grid;
 use grid::*;
