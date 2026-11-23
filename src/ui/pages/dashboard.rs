@@ -133,6 +133,7 @@ fn timer_hero(app: &mut App, ui: &mut Ui, view: &crate::engine::EngineView) {
                 });
                 ui.label(RichText::new(format!("Work {}, then a {} break", super::fmt_dur(s.work_min * 60), super::fmt_dur(s.break_secs))).size(16.0));
                 work_editor(app, ui);
+                break_editor(app, ui);
                 if let Some((_, at)) = view.next_sched {
                     ui.label(RichText::new(format!("Next scheduled screen-off at {}", super::fmt_hm(at))).color(theme::pal().text_dim));
                 }
@@ -182,6 +183,38 @@ fn work_editor(app: &mut App, ui: &mut Ui) {
     let v = v.clamp(1, max);
     if v != before {
         app.engine.settings_mut().work_min = v;
+        app.mark_dirty();
+    }
+}
+
+/// Break length, right beside the timer: any whole second from 5 s up to the max.
+/// Drag the value, double-click to type ("20s", "90s", "2m", "1m30s"), or tap a chip.
+fn break_editor(app: &mut App, ui: &mut Ui) {
+    let max = crate::engine::BREAK_MAX_SECS;
+    let mut v = app.engine.settings().break_secs;
+    let before = v;
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new("Break for").color(theme::pal().text_dim));
+        ui.add(
+            eframe::egui::DragValue::new(&mut v)
+                .range(5..=max)
+                .speed(1.0)
+                .custom_formatter(|n, _| super::fmt_dur((n.round() as u32).max(5)))
+                .custom_parser(|t| crate::engine::parse_duration(t).map(|secs| (secs as f64).max(5.0))),
+        )
+        .on_hover_text("Drag, or double-click and type any length: 20s, 90s, 2m, 1m30s (5 s to 4 h)");
+        for b in [20u32, 30, 60, 120, 300, 600] {
+            if widgets::chip(ui, &super::fmt_dur(b), v == b).on_hover_text("Rest this long each break").clicked() {
+                v = b;
+            }
+        }
+    });
+    let v = v.clamp(5, max);
+    if v != before {
+        let st = app.engine.settings_mut();
+        st.break_secs = v;
+        st.clamp();
+        app.engine.apply_settings_changed();
         app.mark_dirty();
     }
 }
@@ -302,4 +335,15 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             });
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn dashboard_break_input_parses_seconds() {
+        use crate::engine::parse_duration;
+        assert_eq!(parse_duration("45s"), Some(45));
+        assert_eq!(parse_duration("90s"), Some(90));
+        assert_eq!(parse_duration("2m"), Some(120));
+    }
 }

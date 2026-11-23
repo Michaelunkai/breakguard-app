@@ -25,6 +25,8 @@ pub mod picker;
 pub mod pulse;
 pub mod retain;
 pub mod ring;
+pub mod rightnow;
+pub mod tabs;
 pub mod scroll;
 pub mod spacing;
 pub mod spark;

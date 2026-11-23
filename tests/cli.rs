@@ -462,9 +462,11 @@ fn cpu_rate(pid: u32, ms: u64) -> u64 {
 #[test]
 fn killing_mock_breakguard_resumes_paused_agent() {
     use std::io::{BufRead, BufReader};
+    use std::os::windows::process::CommandExt;
     let e = Env::new();
     let mut dummy = Command::new("powershell")
-        .args(["-NoProfile", "-Command", "$e=[Environment]::TickCount+60000; while([Environment]::TickCount -lt $e){ $x=1+1 }"])
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", "$e=[Environment]::TickCount+60000; while([Environment]::TickCount -lt $e){ $x=1+1 }"])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW: no blue popup
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

@@ -47,7 +47,19 @@ pub fn prose_style() -> ProseStyle {
 /// Hook / system text that must never reach the feed.
 pub fn is_noise(text: &str) -> bool {
     let t = text.trim_start();
-    t.contains("system-reminder") || t.contains("PostToolUse hook") || t.contains("PreToolUse hook") || t.starts_with("<command-") || t.starts_with("[token-savior")
+    t.contains("system-reminder")
+        || t.contains("PostToolUse hook")
+        || t.contains("PreToolUse hook")
+        || t.contains("SessionStart hook")
+        || t.contains("UserPromptSubmit hook")
+        || t.contains("Stop hook")
+        || t.contains("SubagentStop hook")
+        || t.starts_with("<command-")
+        || t.starts_with("<local-command")
+        || t.starts_with("<task-notification")
+        || t.starts_with("<ccd")
+        || t.starts_with("Base directory for this skill")
+        || t.starts_with("[token-savior")
 }
 
 pub fn chip_kind(text: &str) -> Option<ChipKind> {
@@ -434,6 +446,32 @@ mod tests {
             ln(LineKind::Assistant, "", "real text", "", 3),
         ]);
         assert_eq!(it.len(), 1);
+    }
+
+    #[test]
+    fn live_filters_stop_hook_task_notification_skill_dump() {
+        let it = build(&[
+            ln(LineKind::User, "", "Stop hook feedback:\n[node x]: RALP", "", 1),
+            ln(LineKind::User, "", "<task-notification><task-id>1</task-id></task-notification>", "", 2),
+            ln(LineKind::User, "", "Base directory for this skill: C:\\x", "", 3),
+            ln(LineKind::User, "", "please fix the bug", "", 4),
+        ]);
+        assert_eq!(it.len(), 1);
+        assert!(matches!(&it[0], Item::User { text, .. } if text == "please fix the bug"));
+    }
+
+    #[test]
+    fn live_real_transcript_lines_hide_stop_hook_box() {
+        let raw = [
+            r#"{"type":"user","timestamp":"2026-11-23T10:00:00Z","message":{"role":"user","content":"fix it"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-11-23T10:00:01Z","message":{"content":[{"type":"text","text":"on it"}]}}"#,
+            r#"{"type":"user","timestamp":"2026-11-23T10:00:02Z","message":{"role":"user","content":"Stop hook feedback:\nRALP: keep working"}}"#,
+            r#"{"type":"user","timestamp":"2026-11-23T10:00:03Z","message":{"role":"user","content":[{"type":"text","text":"<task-notification>done</task-notification>"}]}}"#,
+        ];
+        let lines: Vec<LogLine> = raw.iter().flat_map(|l| crate::logs::parse_record(l)).collect();
+        let it = build(&lines);
+        assert!(it.iter().all(|i| !matches!(i, Item::User { text, .. } if text.contains("hook") || text.contains("task-notification"))), "{it:?}");
+        assert!(it.iter().any(|i| matches!(i, Item::User { text, .. } if text == "fix it")));
     }
 
     #[test]

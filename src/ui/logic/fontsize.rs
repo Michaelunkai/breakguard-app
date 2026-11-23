@@ -3,7 +3,7 @@
 
 pub const MIN: f32 = 10.0;
 pub const MAX: f32 = 22.0;
-pub const DEFAULT: f32 = 13.0;
+pub const DEFAULT: f32 = 15.0;
 
 const KEY: &str = "log_font";
 
@@ -65,8 +65,8 @@ mod tests {
     #[test]
     fn nan() {
         assert_eq!(clamp(f32::NAN), DEFAULT);
-        assert_eq!(bigger(f32::NAN), 14.0);
-        assert_eq!(smaller(f32::NAN), 12.0);
+        assert_eq!(bigger(f32::NAN), 16.0);
+        assert_eq!(smaller(f32::NAN), 14.0);
     }
     #[test]
     fn clamp_basic() {
@@ -80,7 +80,7 @@ mod tests {
     fn to_ini_fmt() {
         assert_eq!(to_ini(13.0), "log_font=13");
         assert_eq!(to_ini(13.5), "log_font=13.5");
-        assert_eq!(to_ini(f32::NAN), "log_font=13");
+        assert_eq!(to_ini(f32::NAN), "log_font=15");
         assert_eq!(to_ini(100.0), "log_font=22");
     }
     #[test]

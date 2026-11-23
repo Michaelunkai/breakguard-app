@@ -595,8 +595,10 @@ mod tests {
     }
 
     fn busy_child() -> Burner {
+        use std::os::windows::process::CommandExt;
         let ch = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "$e=[Environment]::TickCount+900000; while([Environment]::TickCount -lt $e){ $x=1+1 }"])
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", "$e=[Environment]::TickCount+900000; while([Environment]::TickCount -lt $e){ $x=1+1 }"])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW: no blue popup
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

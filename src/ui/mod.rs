@@ -455,7 +455,7 @@ impl App {
             tip_draft: String::new(),
             confirm_reset_stats: false,
             confirm_reset_settings: false,
-            log_tab: if std::env::var("BREAKGUARD_LOG_TAB").is_ok() { 2 } else { 0 },
+            log_tab: if std::env::var("BREAKGUARD_LOG_TAB").is_ok() { 3 } else { 0 },
             lanes: Default::default(),
             last_title: String::new(),
             last_page: Page::Dashboard,

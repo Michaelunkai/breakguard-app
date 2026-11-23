@@ -587,7 +587,8 @@ pub struct LogHub {
     tailers: std::collections::HashMap<String, Tailer>,
     index: (std::time::Instant, std::collections::HashMap<String, PathBuf>),
     last_write_ms: std::collections::HashMap<String, i64>,
-    gone_since: std::collections::HashMap<String, i64>,
+    /// When each ended session was first seen gone (unix ms); the Finished tab ages by it.
+    pub gone_since: std::collections::HashMap<String, i64>,
     checklists: std::collections::HashMap<String, PathBuf>,
     pub ralp: std::collections::HashMap<String, RalpFooter>,
     /// A finished session's lane stays this long after its process exits.
@@ -608,9 +609,8 @@ impl LogHub {
             gone_since: Default::default(),
             checklists: Default::default(),
             ralp: Default::default(),
-            // the Live tab lists only running sessions: an ended one leaves after a short grace
-            // (covers one missed scan, e.g. a <pid>.json caught mid-write)
-            finished_keep_ms: 3_000,
+            // an ended session leaves the Live tab at once and stays on the Finished tab for a few hours
+            finished_keep_ms: crate::ui::logic::tabs::FINISHED_KEEP_MS,
             history_bytes: 256 * 1024,
         }
     }
@@ -1205,7 +1205,7 @@ mod tests {
         std::fs::write(d.join("sessions").join("300.json"), r#"{"pid":300,"sessionId":"c","cwd":"C:\\w\\gamma","startedAt":1,"name":"Renamed"}"#).unwrap();
         hub.tick(true, 3200);
         assert!(hub.store.logs.iter().any(|l| l.id == "c" && l.name == "Renamed"));
-        // an ended session leaves within the default grace (3 s), not minutes later
+        // an ended session turns Finished at once and stays for the default keep (3 hours), then goes
         let mut dflt = LogHub::new(crate::sessions::roots_with(Some(&d)), all_alive());
         dflt.tick(true, 10_000);
         assert!(dflt.store.logs.iter().any(|l| l.id == "c"));
@@ -1213,7 +1213,10 @@ mod tests {
         dflt.tick(true, 11_000);
         assert!(dflt.store.logs.iter().any(|l| l.id == "c" && l.state == LogState::Finished), "grace: one missed scan");
         dflt.tick(true, 14_000);
-        assert!(dflt.store.logs.iter().all(|l| l.id != "c"), "gone 3 s after the process ended");
+        assert!(dflt.store.logs.iter().any(|l| l.id == "c" && l.state == LogState::Finished), "still on the Finished tab 3 s later");
+        assert_eq!(dflt.gone_since.get("c").copied(), Some(11_000), "finish time recorded for the Finished tab");
+        dflt.tick(true, 11_000 + crate::ui::logic::tabs::FINISHED_KEEP_MS);
+        assert!(dflt.store.logs.iter().all(|l| l.id != "c"), "dropped after the finished keep");
         // finished lane lingers for finished_keep_ms
         let mut keep = LogHub::new(crate::sessions::roots_with(Some(&d)), Box::new(|pid, _| pid != 200));
         keep.finished_keep_ms = 60_000;

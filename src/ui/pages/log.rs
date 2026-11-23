@@ -35,13 +35,14 @@ fn read_tail(max_bytes: u64) -> String {
 pub fn show(app: &mut App, ui: &mut Ui) {
     super::title(ui, "Activity log");
     let mut tab = app.log_tab;
-    if crate::ui::widgets::segmented(ui, &mut tab, &["Live", "Activity", "Sessions"]) {
+    if crate::ui::widgets::segmented(ui, &mut tab, &["Live", "Finished", "Activity", "Sessions"]) {
         app.log_tab = tab;
     }
     ui.add_space(6.0);
     match app.log_tab {
-        0 => return super::lanes::show(app, ui),
-        2 => return sessions_tab(app, ui),
+        0 => return super::lanes::show(app, ui, false),
+        1 => return super::lanes::show(app, ui, true),
+        3 => return sessions_tab(app, ui),
         _ => {}
     }
     if app.log_cache.0.elapsed() > Duration::from_secs(2) {

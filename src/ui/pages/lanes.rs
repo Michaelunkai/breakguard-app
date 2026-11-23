@@ -10,7 +10,9 @@ use crate::ui::parts::{error_badge, lane_keys_ui, lane_persist_io, lane_retentio
 mod lane_a11y;
 use std::collections::HashMap;
 
-pub const LANE_H: f32 = 220.0;
+pub const LANE_H: f32 = 340.0;
+/// Height of the stretch grip under every lane.
+pub const GRIP_H: f32 = 22.0;
 /// Left gutter that keeps the error glyph clear of the time column.
 const ERROR_GUTTER: f32 = 20.0;
 pub const TAG_W: f32 = 96.0;
@@ -66,9 +68,7 @@ pub struct LaneUi {
     /// last layout written to disk; saved again only when it changes
     pub saved: LayoutSave,
 }
-
 /// Minutes a finished lane stays visible before it is removed (dimmed for the last 20 s).
-const KEEP_MIN: u32 = 5;
 
 impl Default for LaneUi {
     fn default() -> Self {
@@ -311,7 +311,7 @@ fn draw_row(ui: &mut Ui, l: &LogLine, mono: &FontId, char_w: f32, rh: f32, now_m
     let max_chars = (avail / char_w) as usize;
     // same text as the height calc above: plain sentence only unless expanded (wrap)
     let shown = shown_text(l, wrap, max_chars);
-    let mut job = tokens_render::highlighted_job(&shown, c, mono.clone(), query);
+    let mut job = tokens_render::highlighted_job(&shown, c, if l.kind == LineKind::ToolCall && l.plain.is_empty() { mono.clone() } else { FontId::proportional(mono.size + 0.5) }, query);
     if wrap {
         job.wrap.max_width = avail;
     }
@@ -395,14 +395,16 @@ pub fn progress_text(done: u32, total: u32) -> String {
 
 fn progress_row(ui: &mut Ui, p: &(u32, u32, String), accent: Color32) {
     let (done, total, step) = p;
+    ui.add_space(2.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(progress_text(*done, *total)).size(12.0).strong().color(accent_text(accent, theme::is_light())));
-        let w = (ui.available_width() - 8.0).max(60.0);
-        ui.add_sized([w, 8.0], |ui: &mut Ui| crate::ui::widgets::progress_bar(ui, *done as f32 / (*total).max(1) as f32, accent, 8.0));
+        ui.label(RichText::new(progress_text(*done, *total)).size(13.0).strong().color(accent_text(accent, theme::is_light())));
+        let w = (ui.available_width() - 4.0).max(60.0);
+        ui.add_sized([w, 10.0], |ui: &mut Ui| crate::ui::widgets::progress_bar(ui, *done as f32 / (*total).max(1) as f32, accent, 10.0));
     });
     if !step.is_empty() {
-        ui.add(egui::Label::new(RichText::new(step).size(12.0).color(theme::pal().text_dim)).truncate()).on_hover_text("Newest ledger line of this session's run");
+        ui.add(egui::Label::new(RichText::new(format!("Latest: {step}")).size(12.5).color(theme::pal().text_dim)).truncate()).on_hover_text("Newest ledger line of this session's run");
     }
+    ui.add_space(2.0);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -425,6 +427,7 @@ fn lane(ui: &mut Ui, log: &SessionLog, ui_state: &mut LaneUi, creature: usize, n
     // selection is drawn as a focus ring below, so the frame keeps its plain border
     let r = crate::ui::widgets::lane_frame(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
+        let lane_top = ui.cursor().min.y;
         ui.horizontal(|ui| {
             let (cr, cr_resp) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::click());
             let pop_id = ui.make_persistent_id(("creature_pick", &id));
@@ -489,6 +492,8 @@ fn lane(ui: &mut Ui, log: &SessionLog, ui_state: &mut LaneUi, creature: usize, n
         {
             let all: Vec<&LogLine> = log.iter().collect();
             let owned: Vec<LogLine> = all.iter().rev().take(60).rev().map(|l| (*l).clone()).collect();
+            let rn = crate::ui::logic::rightnow::right_now(log.state, &owned, now_ms);
+            ui.add(egui::Label::new(RichText::new(rn).size(14.0).strong().color(accent_text(accent, theme::is_light()))).truncate());
             let nd = crate::ui::logic::feed::now_doing(&owned);
             if !nd.is_empty() {
                 ui.add(egui::Label::new(RichText::new(nd).size(12.0).italics().color(theme::pal().text_dim)).truncate());
@@ -552,7 +557,10 @@ fn lane(ui: &mut Ui, log: &SessionLog, ui_state: &mut LaneUi, creature: usize, n
         let sp = crate::ui::logic::spacing::Prefs { density: if dense { crate::ui::logic::spacing::Density::Dense } else { crate::ui::logic::spacing::Density::Comfortable }, wrap, time_mode: 0, font };
         let rh = crate::ui::logic::spacing::row_height(&sp).max(font + 2.0).max(min_row_h(font, dense));
         let char_w = ui.fonts(|f| f.glyph_width(&mono, 'm'));
-        let h = (crate::ui::parts::lane_scale_perf::clamp_lane_h(view.height) - 70.0).max(rh * 3.0);
+        // the output area takes exactly what is left of the lane height after the header, so the lane
+        // never overflows its slot and the stretch grip stays visible
+        let used = (ui.cursor().min.y - lane_top).max(0.0);
+        let h = (crate::ui::parts::lane_scale_perf::clamp_lane_h(view.height) - used - GRIP_H - 34.0).max(rh * 3.0);
         let held = log.len();
         let end = view.freeze.visible_count(log.total_lines, held, log.dropped).min(held);
         let start = held.saturating_sub(view.cleared.visible_count(log.total_lines, held, log.dropped)).min(end);
@@ -623,12 +631,21 @@ fn lane(ui: &mut Ui, log: &SessionLog, ui_state: &mut LaneUi, creature: usize, n
             ui.painter().rect_filled(b, 11.0, accent.gamma_multiply(0.85));
             ui.painter().text(b.center(), Align2::CENTER_CENTER, t, FontId::proportional(12.0), Color32::BLACK);
         }
-        let (grip, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::drag());
-        ui.painter().rect_filled(Rect::from_center_size(grip.center(), vec2(40.0, 3.0)), 2.0, if resp.hovered() { accent } else { theme::pal().border });
-        if resp.hovered() || resp.dragged() {
+        let (grip, resp) = ui.allocate_exact_size(vec2(ui.available_width(), GRIP_H), Sense::click_and_drag());
+        let hot = resp.hovered() || resp.dragged();
+        if hot {
+            ui.painter().rect_filled(grip, 4.0, accent.gamma_multiply(0.16));
+        }
+        // always-visible pill handle: a stretchable lane must look stretchable
+        let pill = Rect::from_center_size(grip.center(), vec2(if hot { 120.0 } else { 72.0 }, 5.0));
+        ui.painter().rect_filled(pill, 2.5, if hot { accent } else { theme::pal().text_dim.gamma_multiply(0.7) });
+        let resp = resp.on_hover_text("Drag up or down to show fewer or more lines. Double-click to reset.");
+        if hot {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
         }
-        if resp.dragged() {
+        if resp.double_clicked() {
+            view.height = LANE_H;
+        } else if resp.dragged() {
             view.height = height::drag_height(view.height, resp.drag_delta().y);
         }
     });
@@ -654,7 +671,7 @@ fn lane(ui: &mut Ui, log: &SessionLog, ui_state: &mut LaneUi, creature: usize, n
     }
 }
 
-pub fn show(app: &mut App, ui: &mut Ui) {
+pub fn show(app: &mut App, ui: &mut Ui, finished_tab: bool) {
     // screenshot demo: BREAKGUARD_PAUSE_DEMO pauses every dummy agent (mock mode only), same as the Breaks page
     static DEMO: std::sync::Once = std::sync::Once::new();
     if crate::sys::is_mock() && std::env::var_os("BREAKGUARD_PAUSE_DEMO").is_some() {
@@ -681,7 +698,16 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         }
     }
     app.lanes.layout.prune(&ids);
-    let mut rows: Vec<order::Row> = h.store.logs.iter().map(|l| order::Row {
+    // Live = process still alive; Finished = ended within the last few hours. An ended session leaves Live at once.
+    let in_tab = |l: &crate::logs::SessionLog| {
+        let mut last: Vec<LogLine> = l.iter().rev().take(2).cloned().collect();
+        last.reverse();
+        let working = crate::ui::logic::rightnow::is_working(l.state, &last, now_ms);
+        let since = h.gone_since.get(&l.id).copied().or_else(|| last.last().map(|x| x.ts_ms).filter(|t| *t > 0));
+        let b = crate::ui::logic::tabs::bucket(working, since, now_ms, crate::ui::logic::tabs::FINISHED_KEEP_MS);
+        b == if finished_tab { crate::ui::logic::tabs::Bucket::Finished } else { crate::ui::logic::tabs::Bucket::Live }
+    };
+    let mut rows: Vec<order::Row> = h.store.logs.iter().filter(|l| in_tab(l)).map(|l| order::Row {
         id: l.id.clone(),
         name: l.name.clone(),
         state: match l.state { LogState::Running => order::State::Running, LogState::Idle => order::State::Idle, LogState::Finished => order::State::Finished },
@@ -689,6 +715,11 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     }).collect();
     order::sort_rows(&mut rows, app.lanes.sort);
     let sorted: Vec<String> = rows.into_iter().map(|r| r.id).collect();
+    if sorted.is_empty() {
+        ui.add_space(theme::SP_S);
+        ui.label(RichText::new(if finished_tab { "Nothing finished in the last 3 hours." } else { "No session is running right now. Finished ones are on the Finished tab." }).size(15.0).color(theme::pal().text_dim));
+        return;
+    }
     let visible = app.lanes.layout.visible(&sorted);
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt("lane_sort").selected_text(match app.lanes.sort { SortMode::RunningFirst => "Running first", SortMode::Name => "Name", SortMode::Newest => "Newest" }).show_ui(ui, |ui| {
@@ -731,16 +762,6 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             keys::Out::None => {}
         }
     }
-    // retention: a finished lane dims for KEEP_MIN minutes, then fades out and is dropped from the page
-    for l in &h.store.logs {
-        if l.state == LogState::Finished {
-            ui_state.finished_at.entry(l.id.clone()).or_insert(now_ms);
-        } else {
-            ui_state.finished_at.remove(&l.id);
-        }
-    }
-    let live: Vec<String> = h.store.logs.iter().map(|l| l.id.clone()).collect();
-    ui_state.finished_at.retain(|id, _| live.contains(id));
     // side by side when the page is wide enough (LANE_MIN_W per column); otherwise one lane per row.
     // Row heights come from the fixed view.height only, never from measured content, so a new line
     // in one lane cannot move the rects of the others.
@@ -762,11 +783,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             row_top_on_screen = ui.clip_rect().expand(lane_cull_margin()).intersects(row);
         }
         let Some(pos) = h.store.logs.iter().position(|l| &l.id == id) else { continue };
-        let finished = ui_state.finished_at.get(id).copied();
-        if lane_retention_ui::should_remove(finished, now_ms, KEEP_MIN) {
-            continue;
-        }
-        let opacity = lane_retention_ui::lane_opacity(finished, now_ms, KEEP_MIN);
+        let opacity = if finished_tab { 0.75 } else { 1.0 };
         let unseen = ui_state.badges.unseen(id, h.store.logs[pos].errors);
         let selected = visible.get(ui_state.nav.selected).map(|s| s == id).unwrap_or(false);
         let (last, vh) = ui_state.views.get(id).map(|v| (v.last_h, v.height)).unwrap_or((0.0, LANE_H));
