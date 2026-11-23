@@ -68,7 +68,7 @@ $env:BREAKGUARD_DATA_DIR="$env:TEMP\bg-data"
 ```
 
 ## Install
-Download or build `breakguard.exe`, put it anywhere and run it. No installer, no admin rights. Settings live in `%APPDATA%\BreakGuard`.
+Download `breakguard.exe` from the [latest Release](https://github.com/Michaelunkai/breakguard-app/releases/latest), put it anywhere and run it (no build needed). Or build it yourself (below). No installer, no admin rights. Settings live in `%APPDATA%\BreakGuard`.
 
 ## Build
 Needs Rust (stable) on Windows: `cargo build --release`, or use the script below.
